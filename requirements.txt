@@ -2,8 +2,8 @@ streamlit
 pandas
 numpy
 plotly
-xlsxwriter
 pillow
+xlsxwriter
 opencv-python
 scikit-image
 streamlit-webrtc
