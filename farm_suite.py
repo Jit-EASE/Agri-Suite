@@ -144,12 +144,49 @@ ACRE_TO_HA = 0.4046856422
 
 def ytd(series): return pd.Series(series).fillna(0).cumsum().round(1)
 
-def excel_download_button(dfs: Dict[str, pd.DataFrame], filename="FarmSuite_Export.xlsx", label="⬇️ Excel Export"):
+def excel_download_button(dfs: dict, filename="FarmSuite_Export.xlsx", label="⬇️ Excel Export"):
+    """
+    Writes multiple DataFrames to an in-memory Excel file with SAFE worksheet names:
+      - disallow []:*?/\
+      - trim to 31 chars
+      - de-duplicate by adding _1, _2, ...
+    """
+    import re, io, pandas as pd
+
+    def sanitize_sheet_name(name: str) -> str:
+        if not isinstance(name, str):
+            name = str(name)
+        # Replace invalid Excel chars
+        name = re.sub(r'[\[\]\:\*\?\/\\]', ' ', name)
+        # Collapse whitespace and trim
+        name = re.sub(r'\s+', ' ', name).strip()
+        # Fallback if empty
+        if not name:
+            name = "Sheet"
+        # Enforce 31-char limit
+        return name[:31]
+
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        for sheet, df in dfs.items():
-            df.to_excel(writer, sheet_name=sheet, index=True)
-    st.download_button(label=label, data=buffer.getvalue(), file_name=filename, mime="application/vnd.ms-excel")
+        used = set()
+        for raw_name, df in dfs.items():
+            base = sanitize_sheet_name(raw_name)
+            name = base
+            i = 1
+            # Ensure uniqueness within the 31-char Excel limit
+            while name in used:
+                suffix = f"_{i}"
+                name = (base[: max(0, 31 - len(suffix))] + suffix)
+                i += 1
+            used.add(name)
+            df.to_excel(writer, sheet_name=name, index=True)
+
+    st.download_button(
+        label=label,
+        data=buffer.getvalue(),
+        file_name=filename,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 def contextual_ai_fallback(plan_dict: Dict) -> str:
     limit = plan_dict.get("n_limit", 170)
