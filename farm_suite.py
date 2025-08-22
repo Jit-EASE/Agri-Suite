@@ -646,9 +646,8 @@ with tab_realtime:
                 ctx.video_transformer.sensitivity = st.session_state["rt_sens"]
                 ctx.video_transformer.task = "Leaf" if task.startswith("Leaf") else "Crack"
 
-
-    elif section == "Finance":
-        st.markdown("### Finance: Costs, Returns & N Response")
+elif section == "Finance":
+    st.markdown("### Finance: Costs, Returns & N Response")
 
     # Inputs
     f1, f2, f3, f4 = st.columns(4)
