@@ -579,12 +579,36 @@ elif section == "Sensors (Camera & Edge AI)":
                         st.success(f"Saved annotated frame: `{outp}`")
 
     # ---- Realtime mode (optional) ----
-    with tab_realtime:
-        if not (HAS_WEBRTC and HAS_CV2 and HAS_AV):
-            st.warning("Realtime requires `streamlit-webrtc`, `av`, and `opencv-python`. Install and reload.")
+with tab_realtime:
+    st.caption("Realtime is optional. Photo mode works offline without extra packages.")
+    rt_enabled = st.checkbox(
+        "Enable realtime webcam",
+        value=False,
+        help="Requires streamlit-webrtc, av, and opencv-python."
+    )
+
+    if not rt_enabled:
+        st.info("Turn this on only if you want a live webcam overlay.")
+    else:
+        # Check dependencies only when user opts-in
+        missing = []
+        if not HAS_WEBRTC: missing.append("streamlit-webrtc")
+        if not HAS_AV:     missing.append("av")
+        if not HAS_CV2:    missing.append("opencv-python")
+
+        if missing:
+            st.error("Missing packages: " + ", ".join(missing))
+            st.code("pip install " + " ".join(missing))
+            if "av" in missing:
+                st.write("Linux may also need FFmpeg:")
+                st.code("sudo apt-get update && sudo apt-get install -y ffmpeg")
         else:
-            st.caption("Realtime runs **entirely local**. Close the stream to stop processing.")
+            st.caption("Realtime runs entirely local. Close the stream to stop processing.")
             mode_desc = "Leaf" if task.startswith("Leaf") else "Crack"
+
+            from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, RTCConfiguration
+            import av  # safe now, we know it's installed
+            import cv2 # already required for realtime
 
             class EdgeTransformer(VideoTransformerBase):
                 def __init__(self):
@@ -594,11 +618,18 @@ elif section == "Sensors (Camera & Edge AI)":
                     img = frame.to_ndarray(format="bgr24")
                     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                     if self.task == "Leaf":
-                        res = analyze_leaf_rgb(rgb, vari_thresh=0.02*self.sensitivity,
-                                               lesion_canny=(int(60*self.sensitivity), int(140*self.sensitivity)))
+                        res = analyze_leaf_rgb(
+                            rgb,
+                            vari_thresh=0.02*self.sensitivity,
+                            lesion_canny=(int(60*self.sensitivity), int(140*self.sensitivity))
+                        )
                         out = res["overlay"]
                     else:
-                        res = analyze_crack_rgb(rgb, canny=(int(100/self.sensitivity), int(200/self.sensitivity)), use_sato=True)
+                        res = analyze_crack_rgb(
+                            rgb,
+                            canny=(int(100/self.sensitivity), int(200/self.sensitivity)),
+                            use_sato=True
+                        )
                         out = res["overlay"]
                     return av.VideoFrame.from_ndarray(cv2.cvtColor(out, cv2.COLOR_RGB2BGR), format="bgr24")
 
@@ -614,6 +645,7 @@ elif section == "Sensors (Camera & Edge AI)":
             if ctx.video_transformer:
                 ctx.video_transformer.sensitivity = st.session_state["rt_sens"]
                 ctx.video_transformer.task = "Leaf" if task.startswith("Leaf") else "Crack"
+
 
 elif section == "Finance":
     st.markdown("### Finance: Costs, Returns & N Response")
