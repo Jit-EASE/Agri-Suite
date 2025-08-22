@@ -78,30 +78,25 @@ st.markdown("""
   display: flex;
   align-items: center;
   gap: .6rem;
-  flex-wrap: wrap;                 /* wrap nicely on small screens */
-  width: 100%;                     /* fill the Streamlit content column */
-  box-sizing: border-box;          /* include padding in width calc */
-  padding: .65rem .9rem;           /* roomy default padding */
-  min-height: 70px;                /* keep button from squashing */
+  flex-wrap: wrap;
+  width: 100%;
+  box-sizing: border-box;
+  padding: .65rem .9rem;
+  min-height: 70px;
   background: linear-gradient(90deg, #2aa24f, #5fd37a);
-  border-radius: 12px;             /* not too round => less visual clipping */
+  border-radius: 12px;
   color: #fff;
-  margin: .25rem 0 1rem 0;         /* no negative margins (prevents clipping) */
+  margin: .25rem 0 1rem 0;
   box-shadow: 0 3px 14px rgba(0,0,0,.07);
-  overflow: visible;               /* ensure glow/shadow show fully */
+  overflow: visible;
 }
-
-/* Fluid typography so text scales without overflowing */
 .toolbar .title{
   font-weight: 800;
   letter-spacing: .3px;
-  /* clamp(min, preferred, max) => scales with viewport */
   font-size: clamp(0.95rem, 1vw + 0.55rem, 1.15rem);
   line-height: 1.25;
-  flex: 1 1 auto;                  /* title expands, button sticks to right */
+  flex: 1 1 auto;
 }
-
-/* Button scales too; stays clickable on phones */
 .toolbar .btn{
   background: #fff;
   color: #1b7c3b;
@@ -114,16 +109,8 @@ st.markdown("""
   font-size: clamp(.85rem, .25vw + .8rem, .95rem);
 }
 .toolbar .btn:active{ transform: translateY(1px); }
-
-/* Tighter padding and radius on small screens */
-@media (max-width: 992px){
-  .toolbar { padding: .55rem .75rem; border-radius: 10px; }
-}
-@media (max-width: 640px){
-  .toolbar { padding: .5rem .6rem; border-radius: 8px; }
-}
-
-/* Optional: slightly widen the content column on large screens for nicer balance */
+@media (max-width: 992px){ .toolbar { padding: .55rem .75rem; border-radius: 10px; } }
+@media (max-width: 640px){ .toolbar { padding: .5rem .6rem; border-radius: 8px; } }
 .block-container { padding-top: 1rem; padding-bottom: 1.25rem; }
 </style>
 """, unsafe_allow_html=True)
@@ -144,6 +131,7 @@ ACRE_TO_HA = 0.4046856422
 
 def ytd(series): return pd.Series(series).fillna(0).cumsum().round(1)
 
+# ---- SAFE Excel writer (fix invalid sheet names) ----
 def excel_download_button(dfs: dict, filename="FarmSuite_Export.xlsx", label="⬇️ Excel Export"):
     """
     Writes multiple DataFrames to an in-memory Excel file with SAFE worksheet names:
@@ -156,14 +144,9 @@ def excel_download_button(dfs: dict, filename="FarmSuite_Export.xlsx", label="�
     def sanitize_sheet_name(name: str) -> str:
         if not isinstance(name, str):
             name = str(name)
-        # Replace invalid Excel chars
-        name = re.sub(r'[\[\]\:\*\?\/\\]', ' ', name)
-        # Collapse whitespace and trim
+        name = re.sub(r'[\[\]\:\*\?\/\\]', ' ', name)   # remove invalid chars
         name = re.sub(r'\s+', ' ', name).strip()
-        # Fallback if empty
-        if not name:
-            name = "Sheet"
-        # Enforce 31-char limit
+        if not name: name = "Sheet"
         return name[:31]
 
     buffer = io.BytesIO()
@@ -173,10 +156,9 @@ def excel_download_button(dfs: dict, filename="FarmSuite_Export.xlsx", label="�
             base = sanitize_sheet_name(raw_name)
             name = base
             i = 1
-            # Ensure uniqueness within the 31-char Excel limit
             while name in used:
                 suffix = f"_{i}"
-                name = (base[: max(0, 31 - len(suffix))] + suffix)
+                name = base[: max(0, 31 - len(suffix))] + suffix
                 i += 1
             used.add(name)
             df.to_excel(writer, sheet_name=name, index=True)
@@ -224,6 +206,28 @@ def predict_ols_numpy(beta: np.ndarray, X: np.ndarray) -> np.ndarray:
 def calc_thi(temp_c: float, rh: float) -> float:
     return (1.8*temp_c + 32) - (0.55 - 0.0055*rh)*(1.8*temp_c - 26)
 
+# ---- Rebuild plan live from session_state (used by Finance/Reports if cache missing) ----
+def get_current_plan_from_state() -> Dict:
+    months = MONTHS
+    kgN1000 = float(st.session_state.get("kgN_per_1000gal", 10.6))
+    area_ha = float(st.session_state.get("area_ha_header", 72.59))
+    n_limit = int(st.session_state.get("n_limit_header", 170))
+
+    slurry_gal = [float(st.session_state.slurry_gal_ac.get(m, 0.0)) for m in months]
+    org_kgN = [(g/1000.0) * kgN1000 for g in slurry_gal]
+    chem_kgN = [float(st.session_state.chem_target_kgN_ha.get(m, 0.0)) for m in months]
+
+    total_monthly = [org_kgN[i] + chem_kgN[i] for i in range(len(months))]
+    ytd_kgN_per_ha = float(np.sum(total_monthly))  # total across year (kg N/ha)
+
+    return {
+        "n_limit": n_limit,
+        "organic_by_mo": [round(x, 1) for x in org_kgN],
+        "chemical_by_mo": [round(x, 1) for x in chem_kgN],
+        "ytd": ytd_kgN_per_ha,
+        "area_ha": area_ha,
+    }
+
 # ========= Edge/Offline Inference Utilities =========
 def _np_img_from_upload(file) -> np.ndarray:
     """Convert uploaded/camera image to RGB numpy array."""
@@ -250,23 +254,19 @@ def analyze_leaf_rgb(rgb: np.ndarray, vari_thresh: float = 0.02, lesion_canny: T
     vari = (G - R) / (G + R - B + 1e-6)
     exg  = 2*G - R - B
 
-    # Greenness score: mean VARI (clamped)
     mean_vari = float(np.clip(np.nanmean(vari), -1, 1))
-    # Lesion/edge density
     if HAS_CV2:
         hsv = cv2.cvtColor((arr*255).astype(np.uint8), cv2.COLOR_RGB2HSV)
         V = hsv[...,2]
         edges = cv2.Canny(V, lesion_canny[0], lesion_canny[1])
-        lesion_density = float(edges.mean()/255.0)  # 0..1
+        lesion_density = float(edges.mean()/255.0)
     else:
         edges = (np.abs(np.gradient(arr.mean(axis=2))[0])>0.2).astype(np.uint8)*255
         lesion_density = float(edges.mean()/255.0)
 
-    # Stress heuristic: low greenness or high lesion density
     stress_score = float(np.clip((0.15 - mean_vari) * 2.5 + lesion_density*0.8, 0, 1))
     status = "Healthy" if stress_score < 0.33 else ("Moderate" if stress_score < 0.66 else "High Stress")
 
-    # Build overlay heatmap on VARI
     heat = ((vari - vari.min())/(vari.max()-vari.min()+1e-6))
     overlay = (np.stack([1-heat, heat, 0.2*np.ones_like(heat)], axis=2)*255).astype(np.uint8)
     out = (0.6*rgb + 0.4*overlay).astype(np.uint8)
@@ -281,10 +281,7 @@ def analyze_leaf_rgb(rgb: np.ndarray, vari_thresh: float = 0.02, lesion_canny: T
     }
 
 def analyze_crack_rgb(rgb: np.ndarray, canny: Tuple[int,int]=(100,200), use_sato: bool=True) -> Dict:
-    """
-    Offline crack/surface stress analysis using Canny edges + optional Sato vesselness & skeletonization.
-    Returns metrics + annotated image.
-    """
+    """Offline crack/surface stress analysis."""
     if not _ensure_cv2(): return {}
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     gray_blur = cv2.GaussianBlur(gray, (3,3), 0)
@@ -295,16 +292,12 @@ def analyze_crack_rgb(rgb: np.ndarray, canny: Tuple[int,int]=(100,200), use_sato
         vessel = sato(gray_blur/255.0)
         vessel = (255 * (vessel - vessel.min())/(vessel.max()-vessel.min()+1e-6)).astype(np.uint8)
 
-    # Edge density
     density = float(edges.mean()/255.0)
-
-    # Skeleton length (optional)
     skel_len = None
     if HAS_SKIMAGE:
         skel = skeletonize((edges>0).astype(np.uint8))
         skel_len = int(skel.sum())
 
-    # Overlay
     color = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
     color[edges>0] = [255, 50, 50]
     if vessel is not None:
@@ -312,12 +305,7 @@ def analyze_crack_rgb(rgb: np.ndarray, canny: Tuple[int,int]=(100,200), use_sato
         color = cv2.addWeighted(color, 0.6, v_col, 0.4, 0)
 
     risk = "Low" if density < 0.02 else ("Moderate" if density < 0.06 else "High")
-    return {
-        "edge_density": round(density, 4),
-        "skeleton_length": skel_len,
-        "risk": risk,
-        "overlay": color
-    }
+    return {"edge_density": round(density, 4), "skeleton_length": skel_len, "risk": risk, "overlay": color}
 
 # ========= Sidebar =========
 with st.sidebar:
@@ -329,7 +317,6 @@ with st.sidebar:
          "Sensors (Camera & Edge AI)","Finance","AI Advisor","Reports","Settings"],
         index=1
     )
-
 
 # ========= Top Toolbar =========
 st.markdown(
@@ -349,7 +336,7 @@ if "chem_target_kgN_ha" not in st.session_state:
 if "slurry_gal_ac" not in st.session_state:
     st.session_state.slurry_gal_ac = {m: 0.0 for m in MONTHS}
 
-# ========= Sections (Dashboard, Nitrogen Plan, Grass & Crops, Dairy, Livestock, Weather & Soil) =========
+# ========= Sections =========
 if section == "Dashboard":
     st.subheader("Farm KPIs")
     c1,c2,c3,c4 = st.columns(4)
@@ -361,7 +348,7 @@ if section == "Dashboard":
 
 elif section == "Nitrogen Plan":
     st.markdown("### Nitrogen Plan (Organic + Chemical)")
-    c1, c2, c3, c4, c5 = st.columns(5)  # equal widths = clean alignment
+    c1, c2, c3, c4, c5 = st.columns(5)
 
     with c1: paddock_usage = st.selectbox("Paddock Usage", ["Grazing","Grazing + 1 Silage Cut","Silage Only"], index=0)
     with c2: n_paddocks = st.number_input("No. of Paddocks", min_value=1, max_value=300, value=26, step=1)
@@ -369,15 +356,19 @@ elif section == "Nitrogen Plan":
     with c4: pct_farm = st.number_input("Percentage of Farm Area (%)", min_value=0.0, max_value=100.0, value=80.0, step=0.5)
     with c5: avail_slurry = st.number_input("Available Slurry (gallons)", min_value=0.0, value=95732.0, step=100.0)
 
+    # Persist key header values for other tabs
+    st.session_state["area_ha_header"] = float(area_ha)
 
     a1,a2,a3,a4 = st.columns(4)
     with a1:
         kgN_per_1000gal = st.number_input("kg N/ha per 1,000 gal/acre (spring)", 0.0, 100.0, 10.6, step=0.1)
+        st.session_state["kgN_per_1000gal"] = float(kgN_per_1000gal)  # persist
     with a2:
         bag_weight = st.number_input("Fertiliser Bag Weight (kg)", 25, 100, 50, step=5)
     with a3:
         derogation = st.selectbox("Nitrates Limit", ["170 kg N/ha","220 kg N/ha (derogation)","250 kg N/ha (derogation)"], index=0)
         n_limit = 170 if "170" in derogation else (220 if "220" in derogation else 250)
+        st.session_state["n_limit_header"] = int(n_limit)  # persist
     with a4:
         units_factor = st.number_input("Units N/acre per kg N/ha", 0.50, 1.20, 0.81, step=0.01)
 
@@ -456,11 +447,13 @@ elif section == "Nitrogen Plan":
     excel_download_button({"Organic N": organic_df, "Chemical N": chem_df, "Totals": total_df.set_index("Month")},
                           filename=f"NPlan_{datetime.now().strftime('%Y%m%d')}.xlsx")
 
+    # Save full plan cache for other tabs
     st.session_state._plan_cache = {
         "n_limit": n_limit,
         "organic_by_mo": [round(organic_df.loc[m,"kg N/ha"],1) for m in MONTHS],
         "chemical_by_mo": [round(chem_df.loc[m,"Target kg N/ha"],1) for m in MONTHS],
-        "ytd": ytd_total, "area_ha": area_ha, "usage": paddock_usage, "slurry_available": avail_slurry,
+        "ytd": ytd_total, "area_ha": float(area_ha),
+        "usage": paddock_usage, "slurry_available": float(avail_slurry),
     }
 
 elif section == "Grass & Crops":
@@ -589,7 +582,7 @@ elif section == "Sensors (Camera & Edge AI)":
                 else:
                     c1, c2 = st.columns([1.4, 1])
                     with c1:
-                        st.image(res["overlay"], caption="Leaf VARI Heatmap Overlay (offline)", use_container_width=True)
+                        st.image(res["overlay"], caption="Leaf VARI Heatmap Overlay (offline)", use_column_width=True)
                     with c2:
                         st.markdown("**Leaf Metrics (offline)**")
                         st.metric("Mean VARI", res["mean_VARI"])
@@ -606,7 +599,7 @@ elif section == "Sensors (Camera & Edge AI)":
                     res = analyze_crack_rgb(rgb, canny=(int(100/sensitivity), int(200/sensitivity)), use_sato=True)
                     c1, c2 = st.columns([1.4, 1])
                     with c1:
-                        st.image(res["overlay"], caption="Surface Stress Overlay (offline)", use_container_width=True)
+                        st.image(res["overlay"], caption="Surface Stress Overlay (offline)", use_column_width=True)
                     with c2:
                         st.markdown("**Surface Metrics (offline)**")
                         st.metric("Edge Density", res["edge_density"])
@@ -657,30 +650,48 @@ elif section == "Sensors (Camera & Edge AI)":
 
 elif section == "Finance":
     st.markdown("### Finance: Costs, Returns & N Response")
+
+    # Inputs
     f1,f2,f3,f4 = st.columns(4)
     with f1: milk_price = st.number_input("Milk Price (€/L)", 0.10, 2.00, 0.42, step=0.01)
     with f2: fert_cost  = st.number_input("Fertiliser Cost (€/kg N)", 0.1, 5.0, 1.45, step=0.05)
     with f3: herd_size  = st.number_input("Herd Size (cows)", 1, 10000, 120)
     with f4: conv_eff   = st.number_input("N→Milk Response (L/kg N)", 0.0, 25.0, 8.0, step=0.5)
-    plan = st.session_state.get("_plan_cache", {})
-    totalN = plan.get("ytd", 0.0); area_ha = plan.get("area_ha", 70.0)
-    total_cost = totalN * area_ha * fert_cost
-    milk_gain_L = totalN * area_ha * conv_eff
-    revenue = milk_gain_L * milk_price; margin = revenue - total_cost
+
+    # Always have a plan: use cache if present; otherwise rebuild live from state
+    plan = st.session_state.get("_plan_cache")
+    if not plan:
+        plan = get_current_plan_from_state()
+
+    area_ha = float(plan.get("area_ha", st.session_state.get("area_ha_header", 72.59)))
+    totalN_kg_per_ha = float(plan.get("ytd", 0.0))
+    totalN_kg = totalN_kg_per_ha * area_ha
+
+    # Economics
+    fert_cost_eur = totalN_kg_per_ha * area_ha * fert_cost
+    added_milk_L  = totalN_kg_per_ha * area_ha * conv_eff
+    added_rev_eur = added_milk_L * milk_price
+    margin_eur    = added_rev_eur - fert_cost_eur
+
     c1,c2,c3 = st.columns(3)
-    with c1: st.metric("Total N Plan (kg N)", f"{totalN*area_ha:.0f}")
-    with c2: st.metric("Fertiliser Cost (€)", f"{total_cost:,.0f}")
-    with c3: st.metric("Est. Added Revenue (€)", f"{revenue:,.0f}")
-    st.metric("Estimated Margin (€)", f"{margin:,.0f}")
-    Ngrid = np.linspace(0, 300, 61); resp = conv_eff * Ngrid; euro = resp * milk_price - Ngrid * fert_cost
-    curve = pd.DataFrame({"kg N/ha":Ngrid, "Margin €/ha":euro})
+    with c1: st.metric("Total N Plan (kg N)", f"{totalN_kg:,.0f}")
+    with c2: st.metric("Fertiliser Cost (€)", f"{fert_cost_eur:,.0f}")
+    with c3: st.metric("Est. Added Revenue (€)", f"{added_rev_eur:,.0f}")
+    st.metric("Estimated Margin (€)", f"{margin_eur:,.0f}")
+
+    # Response curve (€/ha)
+    Ngrid = np.linspace(0, 300, 61)
+    resp_L_per_ha = conv_eff * Ngrid
+    euro_per_ha   = resp_L_per_ha * milk_price - Ngrid * fert_cost
+    curve = pd.DataFrame({"kg N/ha":Ngrid, "Margin €/ha":euro_per_ha})
     st.plotly_chart(px.line(curve, x="kg N/ha", y="Margin €/ha", title="Simple N Response Margin Curve"),
                     use_container_width=True, height=350)
+
     st.session_state._finance_cache = {"price":milk_price,"costN":fert_cost,"margin_curve":curve}
 
 elif section == "AI Advisor":
     st.markdown("### Contextual AI Advisor")
-    plan = st.session_state.get("_plan_cache", {})
+    plan = st.session_state.get("_plan_cache") or get_current_plan_from_state()
     grass = st.session_state.get("_grass_cache", {})
     dairy = st.session_state.get("_dairy_cache", {})
     wx = st.session_state.get("_wx_cache", {})
@@ -699,16 +710,26 @@ elif section == "AI Advisor":
 elif section == "Reports":
     st.markdown("### Reports & Exports")
     exports: Dict[str, pd.DataFrame] = {}
-    plan = st.session_state.get("_plan_cache", None)
+
+    # Always build a plan (cache or live state) so exports work even if Nitrogen tab wasn't opened
+    plan = st.session_state.get("_plan_cache") or get_current_plan_from_state()
     if plan:
-        exports["Organic N (kg/ha)"] = pd.DataFrame({"kg N/ha": plan["organic_by_mo"]}, index=MONTHS)
-        exports["Chemical N (kg/ha)"] = pd.DataFrame({"kg N/ha": plan["chemical_by_mo"]}, index=MONTHS)
-        exports["Total N (kg/ha)"] = pd.DataFrame({"kg N/ha": np.array(plan["organic_by_mo"]) + np.array(plan["chemical_by_mo"])}, index=MONTHS)
-    if "_dairy_cache" in st.session_state: exports["Dairy Forecast"] = st.session_state["_dairy_cache"]["forecast"].set_index("Day")
-    if "_livestock_cache" in st.session_state: exports["Livestock ADG"] = st.session_state["_livestock_cache"]["adg"].set_index("AnimalID")
-    if "_grass_cache" in st.session_state: exports["Grazing Order"] = st.session_state["_grass_cache"]["table"].set_index("Paddock")
-    if exports: excel_download_button(exports, filename=f"FarmSuite_{datetime.now().strftime('%Y%m%d')}.xlsx")
-    else: st.warning("No data yet. Visit other tabs to generate content for export.")
+        exports["Organic N (kg ha)"]  = pd.DataFrame({"kg N/ha": plan["organic_by_mo"]}, index=MONTHS)
+        exports["Chemical N (kg ha)"] = pd.DataFrame({"kg N/ha": plan["chemical_by_mo"]}, index=MONTHS)
+        tot = (np.array(plan["organic_by_mo"]) + np.array(plan["chemical_by_mo"]))
+        exports["Total N (kg ha)"]    = pd.DataFrame({"kg N/ha": tot}, index=MONTHS)
+
+    if "_dairy_cache" in st.session_state:
+        exports["Dairy Forecast"] = st.session_state["_dairy_cache"]["forecast"].set_index("Day")
+    if "_livestock_cache" in st.session_state:
+        exports["Livestock ADG"] = st.session_state["_livestock_cache"]["adg"].set_index("AnimalID")
+    if "_grass_cache" in st.session_state:
+        exports["Grazing Order"] = st.session_state["_grass_cache"]["table"].set_index("Paddock")
+
+    if exports:
+        excel_download_button(exports, filename=f"FarmSuite_{datetime.now().strftime('%Y%m%d')}.xlsx")
+    else:
+        st.warning("No data yet. Visit other tabs to generate content for export.")
 
 else:
     st.markdown("### Settings")
