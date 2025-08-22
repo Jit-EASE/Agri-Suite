@@ -73,29 +73,61 @@ except Exception:
 st.set_page_config(page_title="Smart Farm Suite (PastureBase-style)", layout="wide", page_icon="🌿")
 st.markdown("""
 <style>
-:root { --brand:#2aa24f; --brand2:#1b7c3b; --ink:#0f2a18; --muted:#5d6b62; }
-.block-container {padding-top:1rem; padding-bottom:1.5rem;}
-.toolbar{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;
-background:linear-gradient(90deg,var(--brand),#5fd37a);padding:.6rem .9rem;border-radius:12px;
-box-shadow:0 3px 14px rgba(0,0,0,.07);color:#fff;margin-bottom:1rem}
-.toolbar .title{font-weight:800;letter-spacing:.3px}
-.toolbar .sp{flex:1 1 10px}
-.toolbar .btn{background:#fff;color:var(--brand2);border:none;border-radius:10px;
-padding:.45rem .8rem;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08)}
-.toolbar .btn:active{transform:translateY(1px)}
-hr.solid{border:0;height:1px;background:#e6efe9;margin:.8rem 0 1rem 0;}
-.metric-card{background:#fff;border:1px solid #e8efe9;border-radius:14px;padding:1rem;
-box-shadow:0 2px 9px rgba(0,0,0,.05)}
-.stTabs [data-baseweb="tab-list"]{gap:.3rem}
-.stTabs [data-baseweb="tab"]{background:#f7fff8;border-radius:10px;padding:.4rem .7rem;
-font-weight:600;border:1px solid #dcefe2}
-.stTabs [aria-selected="true"]{background:#e8f8ec;border-color:#bfe7ca}
-table, th, td {font-size:0.92rem}
-.annot{font-size:.85rem;color:#446;opacity:.9}
-.warn{color:#8a1f11;font-weight:600}
-.ok{color:#0f6e3b;font-weight:600}
+/* ---- Responsive, non-clipping toolbar ---- */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  flex-wrap: wrap;                 /* wrap nicely on small screens */
+  width: 100%;                     /* fill the Streamlit content column */
+  box-sizing: border-box;          /* include padding in width calc */
+  padding: .65rem .9rem;           /* roomy default padding */
+  min-height: 44px;                /* keep button from squashing */
+  background: linear-gradient(90deg, #2aa24f, #5fd37a);
+  border-radius: 12px;             /* not too round => less visual clipping */
+  color: #fff;
+  margin: .25rem 0 1rem 0;         /* no negative margins (prevents clipping) */
+  box-shadow: 0 3px 14px rgba(0,0,0,.07);
+  overflow: visible;               /* ensure glow/shadow show fully */
+}
+
+/* Fluid typography so text scales without overflowing */
+.toolbar .title{
+  font-weight: 800;
+  letter-spacing: .3px;
+  /* clamp(min, preferred, max) => scales with viewport */
+  font-size: clamp(0.95rem, 1vw + 0.55rem, 1.15rem);
+  line-height: 1.25;
+  flex: 1 1 auto;                  /* title expands, button sticks to right */
+}
+
+/* Button scales too; stays clickable on phones */
+.toolbar .btn{
+  background: #fff;
+  color: #1b7c3b;
+  border: none;
+  border-radius: 10px;
+  padding: .45rem .85rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+  font-size: clamp(.85rem, .25vw + .8rem, .95rem);
+}
+.toolbar .btn:active{ transform: translateY(1px); }
+
+/* Tighter padding and radius on small screens */
+@media (max-width: 992px){
+  .toolbar { padding: .55rem .75rem; border-radius: 10px; }
+}
+@media (max-width: 640px){
+  .toolbar { padding: .5rem .6rem; border-radius: 8px; }
+}
+
+/* Optional: slightly widen the content column on large screens for nicer balance */
+.block-container { padding-top: 1rem; padding-bottom: 1.25rem; }
 </style>
 """, unsafe_allow_html=True)
+
 
 # ========= Constants & Helpers =========
 MONTHS = ["Jan/Feb","March","April","May","June","July","August","September","October"]
