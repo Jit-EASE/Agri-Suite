@@ -32,6 +32,12 @@ try:
 except Exception:
     HAS_WEBRTC = False
 
+HAS_AV = True
+try:
+    import av
+except Exception:
+    HAS_AV = False
+
 # ========= Optional OpenAI (Contextual AI) =========
 USE_OPENAI = False
 _openai_mode = None
@@ -115,7 +121,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
 # ========= Constants & Helpers =========
 MONTHS = ["Jan/Feb","March","April","May","June","July","August","September","October"]
 FERTILISERS = {
@@ -133,42 +138,26 @@ def ytd(series): return pd.Series(series).fillna(0).cumsum().round(1)
 
 # ---- SAFE Excel writer (fix invalid sheet names) ----
 def excel_download_button(dfs: dict, filename="FarmSuite_Export.xlsx", label="⬇️ Excel Export"):
-    """
-    Writes multiple DataFrames to an in-memory Excel file with SAFE worksheet names:
-      - disallow []:*?/\
-      - trim to 31 chars
-      - de-duplicate by adding _1, _2, ...
-    """
     import re, io, pandas as pd
-
     def sanitize_sheet_name(name: str) -> str:
-        if not isinstance(name, str):
-            name = str(name)
-        name = re.sub(r'[\[\]\:\*\?\/\\]', ' ', name)   # remove invalid chars
+        if not isinstance(name, str): name = str(name)
+        name = re.sub(r'[\[\]\:\*\?\/\\]', ' ', name)
         name = re.sub(r'\s+', ' ', name).strip()
         if not name: name = "Sheet"
         return name[:31]
-
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
         used = set()
         for raw_name, df in dfs.items():
-            base = sanitize_sheet_name(raw_name)
-            name = base
-            i = 1
+            base = sanitize_sheet_name(raw_name); name = base; i = 1
             while name in used:
                 suffix = f"_{i}"
                 name = base[: max(0, 31 - len(suffix))] + suffix
                 i += 1
             used.add(name)
             df.to_excel(writer, sheet_name=name, index=True)
-
-    st.download_button(
-        label=label,
-        data=buffer.getvalue(),
-        file_name=filename,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+    st.download_button(label=label, data=buffer.getvalue(), file_name=filename,
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 def contextual_ai_fallback(plan_dict: Dict) -> str:
     limit = plan_dict.get("n_limit", 170)
@@ -212,25 +201,18 @@ def get_current_plan_from_state() -> Dict:
     kgN1000 = float(st.session_state.get("kgN_per_1000gal", 10.6))
     area_ha = float(st.session_state.get("area_ha_header", 72.59))
     n_limit = int(st.session_state.get("n_limit_header", 170))
-
     slurry_gal = [float(st.session_state.slurry_gal_ac.get(m, 0.0)) for m in months]
     org_kgN = [(g/1000.0) * kgN1000 for g in slurry_gal]
     chem_kgN = [float(st.session_state.chem_target_kgN_ha.get(m, 0.0)) for m in months]
-
     total_monthly = [org_kgN[i] + chem_kgN[i] for i in range(len(months))]
-    ytd_kgN_per_ha = float(np.sum(total_monthly))  # total across year (kg N/ha)
-
-    return {
-        "n_limit": n_limit,
-        "organic_by_mo": [round(x, 1) for x in org_kgN],
-        "chemical_by_mo": [round(x, 1) for x in chem_kgN],
-        "ytd": ytd_kgN_per_ha,
-        "area_ha": area_ha,
-    }
+    ytd_kgN_per_ha = float(np.sum(total_monthly))
+    return {"n_limit": n_limit,
+            "organic_by_mo": [round(x, 1) for x in org_kgN],
+            "chemical_by_mo": [round(x, 1) for x in chem_kgN],
+            "ytd": ytd_kgN_per_ha, "area_ha": area_ha}
 
 # ========= Edge/Offline Inference Utilities =========
 def _np_img_from_upload(file) -> np.ndarray:
-    """Convert uploaded/camera image to RGB numpy array."""
     img = Image.open(file).convert("RGB")
     return np.array(img)
 
@@ -241,19 +223,11 @@ def _ensure_cv2():
     return True
 
 def analyze_leaf_rgb(rgb: np.ndarray, vari_thresh: float = 0.02, lesion_canny: Tuple[int,int]=(60,140)) -> Dict:
-    """
-    Offline leaf stress analysis:
-    - VARI = (G - R) / (G + R - B)
-    - ExG = 2G - R - B
-    - Edge/lesion density via Canny on V channel
-    Returns metrics + annotated image.
-    """
     if rgb is None: return {}
     arr = rgb.astype(np.float32) / 255.0
     R, G, B = arr[...,0], arr[...,1], arr[...,2]
     vari = (G - R) / (G + R - B + 1e-6)
     exg  = 2*G - R - B
-
     mean_vari = float(np.clip(np.nanmean(vari), -1, 1))
     if HAS_CV2:
         hsv = cv2.cvtColor((arr*255).astype(np.uint8), cv2.COLOR_RGB2HSV)
@@ -263,47 +237,33 @@ def analyze_leaf_rgb(rgb: np.ndarray, vari_thresh: float = 0.02, lesion_canny: T
     else:
         edges = (np.abs(np.gradient(arr.mean(axis=2))[0])>0.2).astype(np.uint8)*255
         lesion_density = float(edges.mean()/255.0)
-
     stress_score = float(np.clip((0.15 - mean_vari) * 2.5 + lesion_density*0.8, 0, 1))
     status = "Healthy" if stress_score < 0.33 else ("Moderate" if stress_score < 0.66 else "High Stress")
-
     heat = ((vari - vari.min())/(vari.max()-vari.min()+1e-6))
     overlay = (np.stack([1-heat, heat, 0.2*np.ones_like(heat)], axis=2)*255).astype(np.uint8)
     out = (0.6*rgb + 0.4*overlay).astype(np.uint8)
-
-    return {
-        "mean_VARI": round(mean_vari, 3),
-        "lesion_density": round(lesion_density, 3),
-        "stress_score": round(stress_score, 3),
-        "status": status,
-        "edges": edges,
-        "overlay": out
-    }
+    return {"mean_VARI": round(mean_vari, 3), "lesion_density": round(lesion_density, 3),
+            "stress_score": round(stress_score, 3), "status": status, "edges": edges, "overlay": out}
 
 def analyze_crack_rgb(rgb: np.ndarray, canny: Tuple[int,int]=(100,200), use_sato: bool=True) -> Dict:
-    """Offline crack/surface stress analysis."""
     if not _ensure_cv2(): return {}
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     gray_blur = cv2.GaussianBlur(gray, (3,3), 0)
     edges = cv2.Canny(gray_blur, canny[0], canny[1])
-
     vessel = None
     if HAS_SKIMAGE and use_sato:
         vessel = sato(gray_blur/255.0)
         vessel = (255 * (vessel - vessel.min())/(vessel.max()-vessel.min()+1e-6)).astype(np.uint8)
-
     density = float(edges.mean()/255.0)
     skel_len = None
     if HAS_SKIMAGE:
         skel = skeletonize((edges>0).astype(np.uint8))
         skel_len = int(skel.sum())
-
     color = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
     color[edges>0] = [255, 50, 50]
     if vessel is not None:
         v_col = cv2.applyColorMap(vessel, cv2.COLORMAP_TURBO)
         color = cv2.addWeighted(color, 0.6, v_col, 0.4, 0)
-
     risk = "Low" if density < 0.02 else ("Moderate" if density < 0.06 else "High")
     return {"edge_density": round(density, 4), "skeleton_length": skel_len, "risk": risk, "overlay": color}
 
@@ -331,10 +291,19 @@ st.markdown(
 # ========= Session defaults for planner =========
 if "fert_choice" not in st.session_state:
     st.session_state.fert_choice = {m: "Protected Urea (46-0-0)" for m in MONTHS}
+
+# Seed realistic default chemical targets (kg N/ha) so Finance isn't zero on first run
+_default_chem_targets = {
+    "Jan/Feb": 22.0, "March": 22.0, "April": 32.0, "May": 30.0,
+    "June": 24.0, "July": 20.0, "August": 16.0, "September": 8.0, "October": 13.0,
+}
 if "chem_target_kgN_ha" not in st.session_state:
-    st.session_state.chem_target_kgN_ha = {m: 0.0 for m in MONTHS}
+    st.session_state.chem_target_kgN_ha = {m: _default_chem_targets.get(m, 0.0) for m in MONTHS}
+
+# Seed slurry with a spring application
 if "slurry_gal_ac" not in st.session_state:
     st.session_state.slurry_gal_ac = {m: 0.0 for m in MONTHS}
+    st.session_state.slurry_gal_ac["Jan/Feb"] = 2500.0  # gal/acre
 
 # ========= Sections =========
 if section == "Dashboard":
@@ -349,7 +318,6 @@ if section == "Dashboard":
 elif section == "Nitrogen Plan":
     st.markdown("### Nitrogen Plan (Organic + Chemical)")
     c1, c2, c3, c4, c5 = st.columns(5)
-
     with c1: paddock_usage = st.selectbox("Paddock Usage", ["Grazing","Grazing + 1 Silage Cut","Silage Only"], index=0)
     with c2: n_paddocks = st.number_input("No. of Paddocks", min_value=1, max_value=300, value=26, step=1)
     with c3: area_ha = st.number_input("Area of Paddocks (ha)", min_value=0.0, value=72.59, step=0.01, format="%.2f")
@@ -362,13 +330,13 @@ elif section == "Nitrogen Plan":
     a1,a2,a3,a4 = st.columns(4)
     with a1:
         kgN_per_1000gal = st.number_input("kg N/ha per 1,000 gal/acre (spring)", 0.0, 100.0, 10.6, step=0.1)
-        st.session_state["kgN_per_1000gal"] = float(kgN_per_1000gal)  # persist
+        st.session_state["kgN_per_1000gal"] = float(kgN_per_1000gal)
     with a2:
         bag_weight = st.number_input("Fertiliser Bag Weight (kg)", 25, 100, 50, step=5)
     with a3:
         derogation = st.selectbox("Nitrates Limit", ["170 kg N/ha","220 kg N/ha (derogation)","250 kg N/ha (derogation)"], index=0)
         n_limit = 170 if "170" in derogation else (220 if "220" in derogation else 250)
-        st.session_state["n_limit_header"] = int(n_limit)  # persist
+        st.session_state["n_limit_header"] = int(n_limit)
     with a4:
         units_factor = st.number_input("Units N/acre per kg N/ha", 0.50, 1.20, 0.81, step=0.01)
 
@@ -582,7 +550,7 @@ elif section == "Sensors (Camera & Edge AI)":
                 else:
                     c1, c2 = st.columns([1.4, 1])
                     with c1:
-                        st.image(res["overlay"], caption="Leaf VARI Heatmap Overlay (offline)", use_column_width=True)
+                        st.image(res["overlay"], caption="Leaf VARI Heatmap Overlay (offline)", use_container_width=True)
                     with c2:
                         st.markdown("**Leaf Metrics (offline)**")
                         st.metric("Mean VARI", res["mean_VARI"])
@@ -612,7 +580,7 @@ elif section == "Sensors (Camera & Edge AI)":
 
     # ---- Realtime mode (optional) ----
     with tab_realtime:
-        if not HAS_WEBRTC or not HAS_CV2:
+        if not (HAS_WEBRTC and HAS_CV2 and HAS_AV):
             st.warning("Realtime requires `streamlit-webrtc`, `av`, and `opencv-python`. Install and reload.")
         else:
             st.caption("Realtime runs **entirely local**. Close the stream to stop processing.")
@@ -622,7 +590,6 @@ elif section == "Sensors (Camera & Edge AI)":
                 def __init__(self):
                     self.sensitivity = 1.0
                     self.task = mode_desc
-
                 def recv(self, frame):
                     img = frame.to_ndarray(format="bgr24")
                     rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -661,12 +628,17 @@ elif section == "Finance":
     # --- Recompute N directly from current session values (no cache dependency) ---
     kgN1000 = float(st.session_state.get("kgN_per_1000gal", 10.6))
     area_ha = float(st.session_state.get("area_ha_header", 72.59))
-
-    # Monthly organic N (slurry) and chemical N (targets) -> kg N/ha
     organic_by_mo  = [(float(st.session_state.slurry_gal_ac.get(m, 0.0))/1000.0)*kgN1000 for m in MONTHS]
     chemical_by_mo = [float(st.session_state.chem_target_kgN_ha.get(m, 0.0)) for m in MONTHS]
+    totalN_kg_per_ha = float(np.sum(organic_by_mo) + np.sum(chemical_by_mo))   # annual kg N/ha
 
-    totalN_kg_per_ha = float(np.sum(organic_by_mo) + np.sum(chemical_by_mo))
+    # Manual override if plan is empty
+    plan_is_zero = (totalN_kg_per_ha == 0.0)
+    use_manual = st.toggle("Use manual annual N rate (kg N/ha) if plan is empty", value=plan_is_zero)
+    manual_N_rate = st.number_input("Manual N rate (kg N/ha)", 0.0, 400.0, 120.0, step=1.0, disabled=not use_manual)
+    if use_manual:
+        totalN_kg_per_ha = float(manual_N_rate)
+
     totalN_kg = totalN_kg_per_ha * area_ha
 
     # Economics (whole farm)
@@ -688,18 +660,16 @@ elif section == "Finance":
     st.plotly_chart(px.line(curve, x="kg N/ha", y="Margin €/ha", title="Simple N Response Margin Curve"),
                     use_container_width=True, height=350)
 
-    # Optional: show the N used for the calculation so it's obvious why zeros occur
     with st.expander("Show N inputs used"):
         dbg = pd.DataFrame({"Month": MONTHS,
                             "Organic kg N/ha": np.round(organic_by_mo, 1),
                             "Chemical kg N/ha": np.round(chemical_by_mo, 1)})
         dbg["Total kg N/ha"] = dbg["Organic kg N/ha"] + dbg["Chemical kg N/ha"]
         st.dataframe(dbg, use_container_width=True, height=260)
-        st.caption(f"Area: {area_ha:.2f} ha • YTD total kg N/ha: {totalN_kg_per_ha:.1f}")
+        st.caption(f"Area: {area_ha:.2f} ha • Annual N used: {totalN_kg_per_ha:.1f} kg N/ha "
+                   f"({'manual override' if use_manual else 'from plan'})")
 
-    # Keep for Reports (doesn't affect finance KPIs)
     st.session_state._finance_cache = {"price": milk_price, "costN": fert_cost, "margin_curve": curve}
-
 
 elif section == "AI Advisor":
     st.markdown("### Contextual AI Advisor")
@@ -722,22 +692,18 @@ elif section == "AI Advisor":
 elif section == "Reports":
     st.markdown("### Reports & Exports")
     exports: Dict[str, pd.DataFrame] = {}
-
-    # Always build a plan (cache or live state) so exports work even if Nitrogen tab wasn't opened
     plan = st.session_state.get("_plan_cache") or get_current_plan_from_state()
     if plan:
         exports["Organic N (kg ha)"]  = pd.DataFrame({"kg N/ha": plan["organic_by_mo"]}, index=MONTHS)
         exports["Chemical N (kg ha)"] = pd.DataFrame({"kg N/ha": plan["chemical_by_mo"]}, index=MONTHS)
         tot = (np.array(plan["organic_by_mo"]) + np.array(plan["chemical_by_mo"]))
         exports["Total N (kg ha)"]    = pd.DataFrame({"kg N/ha": tot}, index=MONTHS)
-
     if "_dairy_cache" in st.session_state:
         exports["Dairy Forecast"] = st.session_state["_dairy_cache"]["forecast"].set_index("Day")
     if "_livestock_cache" in st.session_state:
         exports["Livestock ADG"] = st.session_state["_livestock_cache"]["adg"].set_index("AnimalID")
     if "_grass_cache" in st.session_state:
         exports["Grazing Order"] = st.session_state["_grass_cache"]["table"].set_index("Paddock")
-
     if exports:
         excel_download_button(exports, filename=f"FarmSuite_{datetime.now().strftime('%Y%m%d')}.xlsx")
     else:
