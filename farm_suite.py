@@ -82,7 +82,7 @@ st.markdown("""
   width: 100%;                     /* fill the Streamlit content column */
   box-sizing: border-box;          /* include padding in width calc */
   padding: .65rem .9rem;           /* roomy default padding */
-  min-height: 50px;                /* keep button from squashing */
+  min-height: 100px;                /* keep button from squashing */
   background: linear-gradient(90deg, #2aa24f, #5fd37a);
   border-radius: 12px;             /* not too round => less visual clipping */
   color: #fff;
