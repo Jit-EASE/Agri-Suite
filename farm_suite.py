@@ -652,42 +652,54 @@ elif section == "Finance":
     st.markdown("### Finance: Costs, Returns & N Response")
 
     # Inputs
-    f1,f2,f3,f4 = st.columns(4)
+    f1, f2, f3, f4 = st.columns(4)
     with f1: milk_price = st.number_input("Milk Price (€/L)", 0.10, 2.00, 0.42, step=0.01)
-    with f2: fert_cost  = st.number_input("Fertiliser Cost (€/kg N)", 0.1, 5.0, 1.45, step=0.05)
+    with f2: fert_cost  = st.number_input("Fertiliser Cost (€/kg N)", 0.10, 5.00, 1.45, step=0.05)
     with f3: herd_size  = st.number_input("Herd Size (cows)", 1, 10000, 120)
     with f4: conv_eff   = st.number_input("N→Milk Response (L/kg N)", 0.0, 25.0, 8.0, step=0.5)
 
-    # Always have a plan: use cache if present; otherwise rebuild live from state
-    plan = st.session_state.get("_plan_cache")
-    if not plan:
-        plan = get_current_plan_from_state()
+    # --- Recompute N directly from current session values (no cache dependency) ---
+    kgN1000 = float(st.session_state.get("kgN_per_1000gal", 10.6))
+    area_ha = float(st.session_state.get("area_ha_header", 72.59))
 
-    area_ha = float(plan.get("area_ha", st.session_state.get("area_ha_header", 72.59)))
-    totalN_kg_per_ha = float(plan.get("ytd", 0.0))
+    # Monthly organic N (slurry) and chemical N (targets) -> kg N/ha
+    organic_by_mo  = [(float(st.session_state.slurry_gal_ac.get(m, 0.0))/1000.0)*kgN1000 for m in MONTHS]
+    chemical_by_mo = [float(st.session_state.chem_target_kgN_ha.get(m, 0.0)) for m in MONTHS]
+
+    totalN_kg_per_ha = float(np.sum(organic_by_mo) + np.sum(chemical_by_mo))
     totalN_kg = totalN_kg_per_ha * area_ha
 
-    # Economics
-    fert_cost_eur = totalN_kg_per_ha * area_ha * fert_cost
-    added_milk_L  = totalN_kg_per_ha * area_ha * conv_eff
+    # Economics (whole farm)
+    fert_cost_eur = totalN_kg * fert_cost
+    added_milk_L  = totalN_kg * conv_eff
     added_rev_eur = added_milk_L * milk_price
     margin_eur    = added_rev_eur - fert_cost_eur
 
-    c1,c2,c3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
     with c1: st.metric("Total N Plan (kg N)", f"{totalN_kg:,.0f}")
     with c2: st.metric("Fertiliser Cost (€)", f"{fert_cost_eur:,.0f}")
     with c3: st.metric("Est. Added Revenue (€)", f"{added_rev_eur:,.0f}")
     st.metric("Estimated Margin (€)", f"{margin_eur:,.0f}")
 
-    # Response curve (€/ha)
+    # Response curve (€/ha) – reactive to milk_price & fert_cost
     Ngrid = np.linspace(0, 300, 61)
-    resp_L_per_ha = conv_eff * Ngrid
-    euro_per_ha   = resp_L_per_ha * milk_price - Ngrid * fert_cost
-    curve = pd.DataFrame({"kg N/ha":Ngrid, "Margin €/ha":euro_per_ha})
+    euro_per_ha = (conv_eff * Ngrid) * milk_price - Ngrid * fert_cost
+    curve = pd.DataFrame({"kg N/ha": Ngrid, "Margin €/ha": euro_per_ha})
     st.plotly_chart(px.line(curve, x="kg N/ha", y="Margin €/ha", title="Simple N Response Margin Curve"),
                     use_container_width=True, height=350)
 
-    st.session_state._finance_cache = {"price":milk_price,"costN":fert_cost,"margin_curve":curve}
+    # Optional: show the N used for the calculation so it's obvious why zeros occur
+    with st.expander("Show N inputs used"):
+        dbg = pd.DataFrame({"Month": MONTHS,
+                            "Organic kg N/ha": np.round(organic_by_mo, 1),
+                            "Chemical kg N/ha": np.round(chemical_by_mo, 1)})
+        dbg["Total kg N/ha"] = dbg["Organic kg N/ha"] + dbg["Chemical kg N/ha"]
+        st.dataframe(dbg, use_container_width=True, height=260)
+        st.caption(f"Area: {area_ha:.2f} ha • YTD total kg N/ha: {totalN_kg_per_ha:.1f}")
+
+    # Keep for Reports (doesn't affect finance KPIs)
+    st.session_state._finance_cache = {"price": milk_price, "costN": fert_cost, "margin_curve": curve}
+
 
 elif section == "AI Advisor":
     st.markdown("### Contextual AI Advisor")
