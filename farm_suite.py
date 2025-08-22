@@ -252,15 +252,15 @@ def analyze_crack_rgb(rgb: np.ndarray, canny: Tuple[int,int]=(100,200), use_sato
 
 # ========= Sidebar =========
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Teagasc_logo.svg/320px-Teagasc_logo.svg.png", use_container_width=True)
+    st.markdown("## 🌿 Smart Farm Suite")
+    st.markdown("### Navigation")
     section = st.radio(
-        "Navigation",
+        "",
         ["Dashboard","Nitrogen Plan","Grass & Crops","Dairy","Livestock","Weather & Soil",
          "Sensors (Camera & Edge AI)","Finance","AI Advisor","Reports","Settings"],
         index=1
     )
-    st.markdown("---")
-    st.caption("Professional, responsive UI • Edge/Offline AI enabled")
+
 
 # ========= Top Toolbar =========
 st.markdown(
