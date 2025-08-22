@@ -1,5 +1,5 @@
 # farm_suite_app.py
-# Smart Farm Suite (PastureBase-style) + Camera & Edge/Offline Inference
+# Smart Farm Suite + Camera & Edge/Offline Inference
 # Designed by Jit
 
 import os, io, math, base64
