@@ -252,7 +252,7 @@ def analyze_crack_rgb(rgb: np.ndarray, canny: Tuple[int,int]=(100,200), use_sato
 
 # ========= Sidebar =========
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Teagasc_logo.svg/320px-Teagasc_logo.svg.png", use_column_width=True)
+    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Teagasc_logo.svg/320px-Teagasc_logo.svg.png", use_container_width=True)
     section = st.radio(
         "Navigation",
         ["Dashboard","Nitrogen Plan","Grass & Crops","Dairy","Livestock","Weather & Soil",
@@ -519,7 +519,7 @@ elif section == "Sensors (Camera & Edge AI)":
                 else:
                     c1, c2 = st.columns([1.4, 1])
                     with c1:
-                        st.image(res["overlay"], caption="Leaf VARI Heatmap Overlay (offline)", use_column_width=True)
+                        st.image(res["overlay"], caption="Leaf VARI Heatmap Overlay (offline)", use_container_width=True)
                     with c2:
                         st.markdown("**Leaf Metrics (offline)**")
                         st.metric("Mean VARI", res["mean_VARI"])
@@ -536,7 +536,7 @@ elif section == "Sensors (Camera & Edge AI)":
                     res = analyze_crack_rgb(rgb, canny=(int(100/sensitivity), int(200/sensitivity)), use_sato=True)
                     c1, c2 = st.columns([1.4, 1])
                     with c1:
-                        st.image(res["overlay"], caption="Surface Stress Overlay (offline)", use_column_width=True)
+                        st.image(res["overlay"], caption="Surface Stress Overlay (offline)", use_container_width=True)
                     with c2:
                         st.markdown("**Surface Metrics (offline)**")
                         st.metric("Edge Density", res["edge_density"])
