@@ -533,7 +533,11 @@ elif section == "Sensors (Camera & Edge AI)":
     st.markdown("### Sensors: Device Camera & Edge/Offline Inference")
     st.caption("All processing is **local**. By default, images are not saved (EU-AI Act/GDPR-friendly).")
     save_frames = st.toggle("Allow local save of annotated frames (off = privacy-first)", value=False)
-    task = st.selectbox("Select Analyzer", ["Leaf Stress (VARI/ExG + Lesions)", "Crack/Surface Stress (Canny + Skeleton)"], index=0)
+    task = st.selectbox(
+        "Select Analyzer",
+        ["Leaf Stress (VARI/ExG + Lesions)", "Crack/Surface Stress (Canny + Skeleton)"],
+        index=0
+    )
 
     tab_photo, tab_realtime = st.tabs(["📸 Photo Capture", "🎥 Realtime Webcam (optional)"])
 
@@ -543,8 +547,13 @@ elif section == "Sensors (Camera & Edge AI)":
         sensitivity = st.slider("Sensitivity / Edge Gain", 0.5, 2.0, 1.0, 0.05)
         if img_file is not None:
             rgb = _np_img_from_upload(img_file)
+
             if task.startswith("Leaf"):
-                res = analyze_leaf_rgb(rgb, vari_thresh=0.02*sensitivity, lesion_canny=(int(60*sensitivity), int(140*sensitivity)))
+                res = analyze_leaf_rgb(
+                    rgb,
+                    vari_thresh=0.02 * sensitivity,
+                    lesion_canny=(int(60 * sensitivity), int(140 * sensitivity))
+                )
                 if not res:
                     st.error("Analysis failed (check dependencies).")
                 else:
@@ -559,15 +568,22 @@ elif section == "Sensors (Camera & Edge AI)":
                         st.write(f"Status: **{res['status']}**")
                     if save_frames:
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        outp = f"leaf_{ts}.png"; Image.fromarray(res["overlay"]).save(outp)
+                        outp = f"leaf_{ts}.png"
+                        Image.fromarray(res["overlay"]).save(outp)
                         st.success(f"Saved annotated frame: `{outp}`")
+
             else:
-                if not HAS_CV2: st.error("OpenCV required. Install: `pip install opencv-python`")
+                if not HAS_CV2:
+                    st.error("OpenCV required. Install: `pip install opencv-python`")
                 else:
-                    res = analyze_crack_rgb(rgb, canny=(int(100/sensitivity), int(200/sensitivity)), use_sato=True)
+                    res = analyze_crack_rgb(
+                        rgb,
+                        canny=(int(100 / sensitivity), int(200 / sensitivity)),
+                        use_sato=True
+                    )
                     c1, c2 = st.columns([1.4, 1])
                     with c1:
-                        st.image(res["overlay"], caption="Surface Stress Overlay (offline)", use_column_width=True)
+                        st.image(res["overlay"], caption="Surface Stress Overlay (offline)", use_container_width=True)
                     with c2:
                         st.markdown("**Surface Metrics (offline)**")
                         st.metric("Edge Density", res["edge_density"])
@@ -575,77 +591,78 @@ elif section == "Sensors (Camera & Edge AI)":
                         st.write(f"Risk: **{res['risk']}**")
                     if save_frames:
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        outp = f"surface_{ts}.png"; Image.fromarray(res["overlay"]).save(outp)
+                        outp = f"surface_{ts}.png"
+                        Image.fromarray(res["overlay"]).save(outp)
                         st.success(f"Saved annotated frame: `{outp}`")
 
     # ---- Realtime mode (optional) ----
-with tab_realtime:
-    st.caption("Realtime is optional. Photo mode works offline without extra packages.")
-    rt_enabled = st.checkbox(
-        "Enable realtime webcam",
-        value=False,
-        help="Requires streamlit-webrtc, av, and opencv-python."
-    )
+    with tab_realtime:
+        st.caption("Realtime is optional. Photo mode works offline without extra packages.")
+        rt_enabled = st.checkbox(
+            "Enable realtime webcam",
+            value=False,
+            help="Requires streamlit-webrtc, av, and opencv-python."
+        )
 
-    if not rt_enabled:
-        st.info("Turn this on only if you want a live webcam overlay.")
-    else:
-        # Check dependencies only when user opts-in
-        missing = []
-        if not HAS_WEBRTC: missing.append("streamlit-webrtc")
-        if not HAS_AV:     missing.append("av")
-        if not HAS_CV2:    missing.append("opencv-python")
-
-        if missing:
-            st.error("Missing packages: " + ", ".join(missing))
-            st.code("pip install " + " ".join(missing))
-            if "av" in missing:
-                st.write("Linux may also need FFmpeg:")
-                st.code("sudo apt-get update && sudo apt-get install -y ffmpeg")
+        if not rt_enabled:
+            st.info("Turn this on only if you want a live webcam overlay.")
         else:
-            st.caption("Realtime runs entirely local. Close the stream to stop processing.")
-            mode_desc = "Leaf" if task.startswith("Leaf") else "Crack"
+            # Check dependencies only when user opts-in
+            missing = []
+            if not HAS_WEBRTC: missing.append("streamlit-webrtc")
+            if not HAS_AV:     missing.append("av")
+            if not HAS_CV2:    missing.append("opencv-python")
 
-            from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, RTCConfiguration
-            import av  # safe now, we know it's installed
-            import cv2 # already required for realtime
+            if missing:
+                st.error("Missing packages: " + ", ".join(missing))
+                st.code("pip install " + " ".join(missing))
+                if "av" in missing:
+                    st.write("Linux may also need FFmpeg:")
+                    st.code("sudo apt-get update && sudo apt-get install -y ffmpeg")
+            else:
+                # Import inside the enabled branch (safe)
+                from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, RTCConfiguration
+                import av, cv2
 
-            class EdgeTransformer(VideoTransformerBase):
-                def __init__(self):
-                    self.sensitivity = 1.0
-                    self.task = mode_desc
-                def recv(self, frame):
-                    img = frame.to_ndarray(format="bgr24")
-                    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    if self.task == "Leaf":
-                        res = analyze_leaf_rgb(
-                            rgb,
-                            vari_thresh=0.02*self.sensitivity,
-                            lesion_canny=(int(60*self.sensitivity), int(140*self.sensitivity))
-                        )
-                        out = res["overlay"]
-                    else:
-                        res = analyze_crack_rgb(
-                            rgb,
-                            canny=(int(100/self.sensitivity), int(200/self.sensitivity)),
-                            use_sato=True
-                        )
-                        out = res["overlay"]
-                    return av.VideoFrame.from_ndarray(cv2.cvtColor(out, cv2.COLOR_RGB2BGR), format="bgr24")
+                mode_desc = "Leaf" if task.startswith("Leaf") else "Crack"
 
-            rtc_config = RTCConfiguration({"iceServers":[{"urls":["stun:stun.l.google.com:19302"]}]})
-            st.slider("Sensitivity (realtime)", 0.5, 2.0, 1.0, 0.05, key="rt_sens")
-            ctx = webrtc_streamer(
-                key="edge-rt",
-                mode=WebRtcMode.SENDRECV,
-                rtc_configuration=rtc_config,
-                video_transformer_factory=EdgeTransformer,
-                media_stream_constraints={"video": True, "audio": False},
-            )
-            if ctx.video_transformer:
-                ctx.video_transformer.sensitivity = st.session_state["rt_sens"]
-                ctx.video_transformer.task = "Leaf" if task.startswith("Leaf") else "Crack"
+                class EdgeTransformer(VideoTransformerBase):
+                    def __init__(self):
+                        self.sensitivity = 1.0
+                        self.task = mode_desc
+                    def recv(self, frame):
+                        img = frame.to_ndarray(format="bgr24")
+                        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                        if self.task == "Leaf":
+                            res = analyze_leaf_rgb(
+                                rgb,
+                                vari_thresh=0.02 * self.sensitivity,
+                                lesion_canny=(int(60 * self.sensitivity), int(140 * self.sensitivity))
+                            )
+                            out = res["overlay"]
+                        else:
+                            res = analyze_crack_rgb(
+                                rgb,
+                                canny=(int(100 / self.sensitivity), int(200 / self.sensitivity)),
+                                use_sato=True
+                            )
+                            out = res["overlay"]
+                        return av.VideoFrame.from_ndarray(cv2.cvtColor(out, cv2.COLOR_RGB2BGR), format="bgr24")
 
+                rtc_config = RTCConfiguration({"iceServers":[{"urls":["stun:stun.l.google.com:19302"]}]})
+                st.slider("Sensitivity (realtime)", 0.5, 2.0, 1.0, 0.05, key="rt_sens")
+                ctx = webrtc_streamer(
+                    key="edge-rt",
+                    mode=WebRtcMode.SENDRECV,
+                    rtc_configuration=rtc_config,
+                    video_transformer_factory=EdgeTransformer,
+                    media_stream_constraints={"video": True, "audio": False},
+                )
+                if ctx.video_transformer:
+                    ctx.video_transformer.sensitivity = st.session_state["rt_sens"]
+                    ctx.video_transformer.task = "Leaf" if task.startswith("Leaf") else "Crack"
+
+# ========= Finance =========
 elif section == "Finance":
     st.markdown("### Finance: Costs, Returns & N Response")
 
@@ -659,7 +676,7 @@ elif section == "Finance":
     # --- Recompute N directly from current session values (no cache dependency) ---
     kgN1000 = float(st.session_state.get("kgN_per_1000gal", 10.6))
     area_ha = float(st.session_state.get("area_ha_header", 72.59))
-    organic_by_mo  = [(float(st.session_state.slurry_gal_ac.get(m, 0.0))/1000.0)*kgN1000 for m in MONTHS]
+    organic_by_mo  = [(float(st.session_state.slurry_gal_ac.get(m, 0.0)) / 1000.0) * kgN1000 for m in MONTHS]
     chemical_by_mo = [float(st.session_state.chem_target_kgN_ha.get(m, 0.0)) for m in MONTHS]
     totalN_kg_per_ha = float(np.sum(organic_by_mo) + np.sum(chemical_by_mo))   # annual kg N/ha
 
@@ -684,7 +701,7 @@ elif section == "Finance":
     with c3: st.metric("Est. Added Revenue (€)", f"{added_rev_eur:,.0f}")
     st.metric("Estimated Margin (€)", f"{margin_eur:,.0f}")
 
-    # Response curve (€/ha) – reactive to milk_price & fert_cost
+    # Response curve (€/ha)
     Ngrid = np.linspace(0, 300, 61)
     euro_per_ha = (conv_eff * Ngrid) * milk_price - Ngrid * fert_cost
     curve = pd.DataFrame({"kg N/ha": Ngrid, "Margin €/ha": euro_per_ha})
@@ -692,13 +709,17 @@ elif section == "Finance":
                     use_container_width=True, height=350)
 
     with st.expander("Show N inputs used"):
-        dbg = pd.DataFrame({"Month": MONTHS,
-                            "Organic kg N/ha": np.round(organic_by_mo, 1),
-                            "Chemical kg N/ha": np.round(chemical_by_mo, 1)})
+        dbg = pd.DataFrame({
+            "Month": MONTHS,
+            "Organic kg N/ha": np.round(organic_by_mo, 1),
+            "Chemical kg N/ha": np.round(chemical_by_mo, 1)
+        })
         dbg["Total kg N/ha"] = dbg["Organic kg N/ha"] + dbg["Chemical kg N/ha"]
         st.dataframe(dbg, use_container_width=True, height=260)
-        st.caption(f"Area: {area_ha:.2f} ha • Annual N used: {totalN_kg_per_ha:.1f} kg N/ha "
-                   f"({'manual override' if use_manual else 'from plan'})")
+        st.caption(
+            f"Area: {area_ha:.2f} ha • Annual N used: {totalN_kg_per_ha:.1f} kg N/ha "
+            f"({'manual override' if use_manual else 'from plan'})"
+        )
 
     st.session_state._finance_cache = {"price": milk_price, "costN": fert_cost, "margin_curve": curve}
 
