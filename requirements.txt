@@ -1,0 +1,11 @@
+streamlit
+pandas
+numpy
+plotly
+xlsxwriter
+pillow
+opencv-python
+scikit-image
+streamlit-webrtc
+av
+openai
