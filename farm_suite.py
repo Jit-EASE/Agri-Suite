@@ -292,13 +292,14 @@ if section == "Dashboard":
 
 elif section == "Nitrogen Plan":
     st.markdown("### Nitrogen Plan (Organic + Chemical)")
-    cc1,cc2,cc3,cc4,cc5 = st.columns([1.2,1,1,1,1.2])
-    with cc1: paddock_usage = st.selectbox("Paddock Usage", ["Grazing","Grazing + 1 Silage Cut","Silage Only"], index=0)
-    with cc2: n_paddocks = st.number_input("No. of Paddocks", 1, 300, 26)
-    with cc3: area_ha = st.number_input("Area of Paddocks (ha)", 0.0, 9999.0, 72.59, step=0.01, format="%.2f")
-    with cc4: pct_farm = st.number_input("Percentage of Farm Area (%)", 0.0, 100.0, 80.0, step=0.5)
-    with cc5: avail_slurry = st.number_input("Available Slurry (gallons)", 0.0, 1_000_000.0, 95_732.0, step=100.0)
-    st.markdown('<hr class="solid">', unsafe_allow_html=True)
+    c1, c2, c3, c4, c5 = st.columns(5)  # equal widths = clean alignment
+
+    with c1: paddock_usage = st.selectbox("Paddock Usage", ["Grazing","Grazing + 1 Silage Cut","Silage Only"], index=0)
+    with c2: n_paddocks = st.number_input("No. of Paddocks", min_value=1, max_value=300, value=26, step=1)
+    with c3: area_ha = st.number_input("Area of Paddocks (ha)", min_value=0.0, value=72.59, step=0.01, format="%.2f")
+    with c4: pct_farm = st.number_input("Percentage of Farm Area (%)", min_value=0.0, max_value=100.0, value=80.0, step=0.5)
+    with c5: avail_slurry = st.number_input("Available Slurry (gallons)", min_value=0.0, value=95732.0, step=100.0)
+
 
     a1,a2,a3,a4 = st.columns(4)
     with a1:
