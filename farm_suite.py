@@ -14,15 +14,18 @@ from PIL import Image
 
 # ========= Optional deps (graceful fallbacks) =========
 HAS_CV2 = True
+CV2_ERR = ""
 try:
     import cv2
-except Exception:
+except Exception as _e:
     HAS_CV2 = False
+    CV2_ERR = str(_e)
 
 HAS_SKIMAGE = True
 try:
     from skimage.morphology import skeletonize
     from skimage.filters import sato
+    from skimage.feature import canny  # added for fallback edge detection
 except Exception:
     HAS_SKIMAGE = False
 
@@ -266,6 +269,81 @@ def analyze_crack_rgb(rgb: np.ndarray, canny: Tuple[int,int]=(100,200), use_sato
         color = cv2.addWeighted(color, 0.6, v_col, 0.4, 0)
     risk = "Low" if density < 0.02 else ("Moderate" if density < 0.06 else "High")
     return {"edge_density": round(density, 4), "skeleton_length": skel_len, "risk": risk, "overlay": color}
+
+# NEW: Robust crack/surface analyzer (OpenCV -> scikit-image -> NumPy)
+def analyze_crack_surface(rgb: np.ndarray, canny_pair: Tuple[int,int]=(100,200)) -> Dict:
+    """
+    Returns: {
+      edge_density: float, skeleton_length: int|None, risk: str,
+      overlay: np.ndarray (RGB), engine: str, diagnostics: dict
+    }
+    """
+    diagnostics = {}
+    # Path 1: OpenCV (preferred)
+    if HAS_CV2:
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+        blur = cv2.GaussianBlur(gray, (3,3), 0)
+        edges = cv2.Canny(blur, canny_pair[0], canny_pair[1])
+        density = float(edges.mean()/255.0)
+        skel_len = None
+        if HAS_SKIMAGE:
+            skel = skeletonize(edges > 0)
+            skel_len = int(skel.sum())
+        overlay = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+        overlay[edges > 0] = [255, 50, 50]
+        risk = "Low" if density < 0.02 else ("Moderate" if density < 0.06 else "High")
+        return {
+            "edge_density": round(density, 4),
+            "skeleton_length": skel_len,
+            "risk": risk,
+            "overlay": overlay,
+            "engine": "opencv",
+            "diagnostics": diagnostics
+        }
+
+    # Path 2: scikit-image Canny
+    if HAS_SKIMAGE:
+        # grayscale without skimage.color dependency
+        arr = rgb.astype(np.float32)/255.0
+        gray = (0.299*arr[...,0] + 0.587*arr[...,1] + 0.114*arr[...,2]).astype(np.float32)
+        edges = canny(gray, sigma=1.4)
+        density = float(edges.mean())
+        skel = skeletonize(edges)
+        skel_len = int(skel.sum())
+        overlay = rgb.copy()
+        overlay[edges] = [255, 50, 50]
+        risk = "Low" if density < 0.02 else ("Moderate" if density < 0.06 else "High")
+        return {
+            "edge_density": round(density, 4),
+            "skeleton_length": skel_len,
+            "risk": risk,
+            "overlay": overlay,
+            "engine": "skimage",
+            "diagnostics": diagnostics
+        }
+
+    # Path 3: NumPy gradient fallback
+    arr = rgb.astype(np.float32)/255.0
+    gray = (0.299*arr[...,0] + 0.587*arr[...,1] + 0.114*arr[...,2]).astype(np.float32)
+    gx, gy = np.gradient(gray)
+    gm = np.hypot(gx, gy)
+    thr = float(np.percentile(gm, 88.0))
+    edges = gm >= thr
+    density = float(edges.mean())
+    overlay = rgb.copy()
+    overlay[edges] = [255, 50, 50]
+    risk = "Low" if density < 0.02 else ("Moderate" if density < 0.06 else "High")
+    diagnostics["note"] = "Using NumPy fallback because OpenCV (cv2) and/or scikit-image are unavailable."
+    if CV2_ERR:
+        diagnostics["cv2_error"] = CV2_ERR
+    return {
+        "edge_density": round(density, 4),
+        "skeleton_length": None,
+        "risk": risk,
+        "overlay": overlay,
+        "engine": "numpy-fallback",
+        "diagnostics": diagnostics
+    }
 
 # ========= Sidebar =========
 with st.sidebar:
@@ -559,7 +637,7 @@ elif section == "Sensors (Camera & Edge AI)":
                 else:
                     c1, c2 = st.columns([1.4, 1])
                     with c1:
-                        st.image(res["overlay"], caption="Leaf VARI Heatmap Overlay (offline)", use_container_width=True)
+                        st.image(res["overlay"], caption="Leaf VARI Heatmap Overlay (offline)", use_column_width=True)
                     with c2:
                         st.markdown("**Leaf Metrics (offline)**")
                         st.metric("Mean VARI", res["mean_VARI"])
@@ -573,27 +651,32 @@ elif section == "Sensors (Camera & Edge AI)":
                         st.success(f"Saved annotated frame: `{outp}`")
 
             else:
-                if not HAS_CV2:
-                    st.error("OpenCV required. Install: `pip install opencv-python`")
-                else:
-                    res = analyze_crack_rgb(
-                        rgb,
-                        canny=(int(100 / sensitivity), int(200 / sensitivity)),
-                        use_sato=True
-                    )
-                    c1, c2 = st.columns([1.4, 1])
-                    with c1:
-                        st.image(res["overlay"], caption="Surface Stress Overlay (offline)", use_container_width=True)
-                    with c2:
-                        st.markdown("**Surface Metrics (offline)**")
-                        st.metric("Edge Density", res["edge_density"])
-                        st.metric("Skeleton Length (px)", res["skeleton_length"] if res["skeleton_length"] is not None else 0)
-                        st.write(f"Risk: **{res['risk']}**")
-                    if save_frames:
-                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        outp = f"surface_{ts}.png"
-                        Image.fromarray(res["overlay"]).save(outp)
-                        st.success(f"Saved annotated frame: `{outp}`")
+                # Always use robust analyzer (no hard fail if cv2 missing)
+                res = analyze_crack_surface(
+                    rgb,
+                    canny_pair=(int(100 / sensitivity), int(200 / sensitivity))
+                )
+                c1, c2 = st.columns([1.4, 1])
+                with c1:
+                    st.image(res["overlay"], caption=f"Surface Stress Overlay (engine: {res['engine']})", use_column_width=True)
+                with c2:
+                    st.markdown("**Surface Metrics (offline)**")
+                    st.metric("Edge Density", res["edge_density"])
+                    if res["skeleton_length"] is not None:
+                        st.metric("Skeleton Length (px)", res["skeleton_length"])
+                    st.write(f"Risk: **{res['risk']}**")
+                if res["engine"] != "opencv":
+                    with st.expander("Diagnostics / Enable OpenCV path"):
+                        st.write("OpenCV (cv2) not available; using fallback.")
+                        st.code("pip install opencv-python   # desktop\n# or\npip install opencv-python-headless  # servers/containers")
+                        if CV2_ERR:
+                            st.write("cv2 import error:")
+                            st.code(CV2_ERR)
+                if save_frames:
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    outp = f"surface_{ts}.png"
+                    Image.fromarray(res["overlay"]).save(outp)
+                    st.success(f"Saved annotated frame: `{outp}`")
 
     # ---- Realtime mode (optional) ----
     with tab_realtime:
