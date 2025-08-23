@@ -847,3 +847,8 @@ elif section == "Reports":
 else:
     st.markdown("### Settings")
     st.write("Future: units, default prices, data retention options, themes.")
+st.markdown(
+    "<div style='text-align:center; opacity:.65; margin-top:1.25rem;'>Designed &amp; Developed by Shubhojit Bagchi</div>",
+    unsafe_allow_html=True
+)
+
